@@ -38,7 +38,7 @@ const HOME_CATS = [
 
 function Index() {
   const { data = [] } = useQuery(publicListingsQuery);
-  const featured = data.slice(0, 6);
+  const featured = [...data].sort((a, b) => Number(b.premium) - Number(a.premium)).slice(0, 6);
   const recent = [...data]
     .sort((a, b) => String((b as { created_at?: string }).created_at ?? "").localeCompare(String((a as { created_at?: string }).created_at ?? "")))
     .slice(0, 4);

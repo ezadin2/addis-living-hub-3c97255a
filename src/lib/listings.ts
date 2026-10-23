@@ -135,7 +135,7 @@ export function filterListings(list: Listing[], f: Filters): Listing[] {
   return out.sort((a, b) =>
     sort === "price_asc" ? Number(a.price) - Number(b.price)
       : sort === "price_desc" ? Number(b.price) - Number(a.price)
-      : b.created_at.localeCompare(a.created_at),
+      : Number(b.premium) - Number(a.premium) || b.created_at.localeCompare(a.created_at),
   );
 }
 

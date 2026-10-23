@@ -23,9 +23,9 @@ export const Route = createFileRoute("/rentals/$id")({
     meta: loaderData
       ? [
           { title: `${loaderData.title} — ${loaderData.neighborhood} | FaydaRent` },
-          { name: "description", content: `${formatETB(loaderData.price)}/month · ${loaderData.neighborhood}, ${loaderData.city}. ${loaderData.description.slice(0, 110)}` },
+          { name: "description", content: `${formatETB(loaderData.price)}/${unitLabel(loaderData.price_unit)} · ${loaderData.neighborhood}, ${loaderData.city}. ${loaderData.description.slice(0, 110)}` },
           { property: "og:title", content: loaderData.title },
-          { property: "og:description", content: `${formatETB(loaderData.price)}/month in ${loaderData.neighborhood}` },
+          { property: "og:description", content: `${formatETB(loaderData.price)}/${unitLabel(loaderData.price_unit)} in ${loaderData.neighborhood}` },
           { property: "og:type", content: "website" },
           { name: "twitter:card", content: "summary_large_image" },
         ]
