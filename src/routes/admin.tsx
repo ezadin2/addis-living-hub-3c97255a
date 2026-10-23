@@ -478,15 +478,15 @@ function SubscriptionsTab({ d }: { d: D }) {
         )}
       </Panel>
       <Panel title="Grant a business plan">
-        <form className="flex flex-wrap gap-2" onSubmit={(e) => {
+        <form className="grid gap-2 sm:grid-cols-[2fr_1.5fr_0.7fr_1.5fr_auto]" onSubmit={(e) => {
           e.preventDefault(); const f = new FormData(e.currentTarget);
           const months = Number(f.get("months") || 1); const ends = new Date(); ends.setMonth(ends.getMonth() + months);
           void act(() => supabase.from("subscriptions").insert({ owner_id: String(f.get("owner")), plan: String(f.get("plan")), ends_at: ends.toISOString(), notes: String(f.get("notes") ?? "") }), "Plan activated");
         }}>
-          <select name="owner" required className={input + " w-56"}><option value="">Choose owner</option>{owners.map((o) => <option key={o.id} value={o.id}>{o.full_name || o.id.slice(0, 8)}</option>)}</select>
-          <select name="plan" className={input + " w-44"}><option value="business_basic">Business Basic</option><option value="business_pro">Business Pro</option></select>
-          <input name="months" type="number" min={1} max={24} defaultValue={1} className={input + " w-24"} aria-label="Months" />
-          <input name="notes" placeholder="Payment reference" className={input + " w-48"} />
+          <select name="owner" required className={input}><option value="">Choose owner</option>{owners.map((o) => <option key={o.id} value={o.id}>{o.full_name || o.id.slice(0, 8)}</option>)}</select>
+          <select name="plan" className={input}><option value="business_basic">Business Basic</option><option value="business_pro">Business Pro</option></select>
+          <input name="months" type="number" min={1} max={24} defaultValue={1} className={input} aria-label="Months" />
+          <input name="notes" placeholder="Payment reference" className={input} />
           <button className={btnAccent + " h-9"}>Activate</button>
         </form>
       </Panel>
