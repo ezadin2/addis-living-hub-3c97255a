@@ -9,7 +9,7 @@ import { ListingCard } from "@/components/site/ListingCard";
 import { Button } from "@/components/ui/button";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { useQuery } from "@tanstack/react-query";
-import { CATEGORIES, NEIGHBORHOODS, type Category, type Kind } from "@/lib/listings";
+import { CATEGORIES, NEIGHBORHOODS, fallbackImage, formatETB, listingImages, unitLabel, type Category, type Kind } from "@/lib/listings";
 
 const kindOf = (v: string): Kind | undefined =>
   v.startsWith("kind:") ? (v.slice(5) as Kind) : CATEGORIES.find((c) => c.id === v)?.kind;
@@ -111,10 +111,16 @@ function Index() {
           <div className="mt-6 space-y-3">
             {recent.map((l) => (
               <Link key={l.id} to="/rentals/$id" params={{ id: l.id }} className="flex items-center gap-4 rounded-xl border border-border bg-card p-3 hover:shadow-card">
-                <img src={l.images[0]} alt="" loading="lazy" className="h-16 w-20 shrink-0 rounded-lg object-cover" />
+                <img
+                  src={listingImages(l)[0]}
+                  onError={(e) => { const fb = fallbackImage(l.kind); if (e.currentTarget.src !== new URL(fb, window.location.href).href) e.currentTarget.src = fb; }}
+                  alt={l.title}
+                  loading="lazy"
+                  className="h-16 w-20 shrink-0 rounded-lg bg-muted object-cover"
+                />
                 <div className="min-w-0 flex-1">
                   <p className="truncate font-semibold">{l.title}</p>
-                  <p className="text-sm text-muted-foreground">{l.neighborhood} · ETB {l.price.toLocaleString()}/mo</p>
+                  <p className="text-sm text-muted-foreground">{l.neighborhood} · {formatETB(l.price)}/{unitLabel(l.price_unit)}</p>
                 </div>
                 <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground" />
               </Link>
