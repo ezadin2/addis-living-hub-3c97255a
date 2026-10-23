@@ -1,14 +1,17 @@
-import { createFileRoute, Link, notFound } from "@tanstack/react-router";
+import { createFileRoute, Link, notFound, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
-import { Bath, BedDouble, Calendar, Check, Flag, Heart, MapPin, Ruler, ShieldCheck } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Bath, BedDouble, Calendar, Check, Flag, Heart, MapPin, Ruler, ShieldCheck, Star } from "lucide-react";
 import { toast } from "sonner";
 import { PageShell } from "@/components/site/PageShell";
 import { VerificationBadge } from "@/components/site/VerificationBadge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { fallbackImage, formatETB, listingImages } from "@/lib/listings";
+import { bookingQuote, fallbackImage, formatETB, listingImages, unitLabel } from "@/lib/listings";
 import { listingQuery } from "@/lib/queries";
 import { useFavorites } from "@/lib/favorites";
+import { useAuth } from "@/lib/auth";
+import { supabase } from "@/integrations/supabase/client";
 
 export const Route = createFileRoute("/rentals/$id")({
   loader: async ({ params, context }) => {
@@ -67,7 +70,7 @@ function Detail() {
 
         <div className="mt-8 grid gap-10 lg:grid-cols-[1fr_22rem]">
           <div className="min-w-0">
-            <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-semibold uppercase">Demo listing</span>
+            {l.premium && <span className="rounded-full bg-accent-soft px-2 py-0.5 text-[11px] font-semibold uppercase text-accent">Featured</span>}
             <h1 className="mt-3 text-3xl font-bold">{l.title}</h1>
             <p className="mt-2 flex items-center gap-1 text-muted-foreground"><MapPin className="h-4 w-4" />{l.neighborhood}, {l.city}</p>
             <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -86,17 +89,18 @@ function Detail() {
             </ul>
             <h2 className="mt-10 text-xl font-bold">Rental terms</h2>
             <dl className="mt-3 divide-y divide-border rounded-xl border border-border bg-card text-sm">
-              {[["Monthly rent", formatETB(l.price)], ["Deposit", l.deposit ?? "Ask owner"], ["Furnishing", l.furnishing], ["Minimum duration", `${l.min_term} months`], ["Listed", l.created_at]].map(([k, v]) => (
+              {[[l.price_unit === "day" ? "Daily price" : "Monthly rent", formatETB(l.price)], ["Deposit", l.deposit ?? "Ask owner"], ["Furnishing", l.furnishing ?? "—"], ["Minimum duration", `${l.min_term} ${unitLabel(l.price_unit)}${l.min_term > 1 ? "s" : ""}`], ["Listed", new Date(l.created_at).toLocaleDateString()]].map(([k, v]) => (
                 <div key={k} className="flex justify-between p-3"><dt className="text-muted-foreground">{k}</dt><dd className="font-medium capitalize">{v}</dd></div>
               ))}
             </dl>
+            <Reviews id={l.id} />
           </div>
 
           <aside className="space-y-4 lg:sticky lg:top-20 lg:self-start">
             <div className="rounded-xl border border-border bg-card p-5 shadow-card">
-              <p className="font-display text-2xl font-bold">{formatETB(l.price)}<span className="text-sm font-medium text-muted-foreground"> /month</span></p>
+              <p className="font-display text-2xl font-bold">{formatETB(l.price)}<span className="text-sm font-medium text-muted-foreground"> /{unitLabel(l.price_unit)}</span></p>
               <div className="mt-4 flex items-center gap-3 border-t border-border pt-4">
-                <div className="grid h-10 w-10 place-items-center rounded-full bg-primary font-bold text-primary-foreground">{l.owner_name.slice(-1)}</div>
+                <div className="grid h-10 w-10 place-items-center rounded-full bg-primary font-bold text-primary-foreground">{l.owner_name.slice(0, 1)}</div>
                 <div><p className="font-semibold">{l.owner_name}</p><p className="text-xs text-muted-foreground">{"Owner"}</p></div>
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
@@ -105,12 +109,12 @@ function Detail() {
               </div>
               <p className="mt-3 text-xs text-muted-foreground">ID verification confirms identity, not property ownership. Contact details are shared only after you send a request.</p>
               <div className="mt-4 grid gap-2">
-                <RequestDialog kind="contact" title={l.title} />
-                <RequestDialog kind="viewing" title={l.title} />
-                <Button variant="outline" onClick={() => fav.toggle(l.id)}><Heart className={fav.has(l.id) ? "fill-accent text-accent" : ""} />{fav.has(l.id) ? "Saved" : "Save"}</Button>
+                <RequestDialog kind="rental" l={l} />
+                <RequestDialog kind="viewing" l={l} />
+                <Button variant="outline" onClick={() => void fav.toggle(l.id)}><Heart className={fav.has(l.id) ? "fill-accent text-accent" : ""} />{fav.has(l.id) ? "Saved" : "Save"}</Button>
               </div>
             </div>
-            <ReportDialog />
+            <ReportDialog l={l} />
           </aside>
         </div>
       </div>
