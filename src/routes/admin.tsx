@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import {
   Activity, AlertTriangle, BadgeCheck, Banknote, Bell, Building2, CalendarCheck, FolderTree, LayoutDashboard,
-  ListChecks, Percent, ScrollText, Settings, Star, Users,
+  Crown, ListChecks, Percent, ScrollText, Settings, Star, Users,
 } from "lucide-react";
 import { DashShell, useRoleGate, type NavGroup } from "@/components/dash/DashShell";
 import {
@@ -13,7 +13,7 @@ import {
 import { supabase } from "@/integrations/supabase/client";
 import { categoryLabel, formatETB } from "@/lib/listings";
 
-type Tab = "overview" | "users" | "listings" | "bookings" | "payments" | "reports" | "reviews" | "categories" | "settings" | "audit" | "notifications";
+type Tab = "overview" | "users" | "listings" | "bookings" | "payments" | "reports" | "reviews" | "categories" | "settings" | "audit" | "subscriptions" | "notifications";
 
 export const Route = createFileRoute("/admin")({
   validateSearch: (s: Record<string, unknown>): { tab?: Tab | undefined } => (typeof s["tab"] === "string" ? { tab: s["tab"] as Tab } : {}),
@@ -76,6 +76,7 @@ function AdminPage() {
     { title: "People & money", items: [
       { id: "users", label: "Users & verification", icon: Users, badge: pendingVerif },
       { id: "payments", label: "Payments & commission", icon: Banknote },
+      { id: "subscriptions", label: "Subscriptions & featured", icon: Crown },
       { id: "reports", label: "Reports & disputes", icon: AlertTriangle, badge: openReports },
     ] },
     { title: "System", items: [
@@ -92,6 +93,7 @@ function AdminPage() {
     reports: ["Reports & disputes", "Handle listing reports, rental disputes and support requests."],
     reviews: ["Reviews", "Moderate renter reviews."],
     categories: ["Categories", "Control which rental categories appear on the site."],
+    subscriptions: ["Subscriptions & featured", "Activate business plans and featured placements after payment."],
     settings: ["Platform settings", "Commission, premium fees and support contact."],
     audit: ["Audit log", "Every admin action, recorded."],
     notifications: ["Notifications", "Alerts sent to your account."],
@@ -111,6 +113,7 @@ function AdminPage() {
       {tab === "reports" && <ReportsTab d={d} />}
       {tab === "reviews" && <ReviewsTab d={d} />}
       {tab === "categories" && <CategoriesTab />}
+      {tab === "subscriptions" && <SubscriptionsTab d={d} />}
       {tab === "settings" && <SettingsTab />}
       {tab === "audit" && <AuditTab d={d} />}
       {tab === "notifications" && <NotificationsPanel />}
@@ -435,5 +438,79 @@ function AuditTab({ d }: { d: D }) {
         </Table>
       )}
     </Panel>
+  );
+}
+
+const PLAN_NAMES: Record<string, string> = { business_basic: "Business Basic", business_pro: "Business Pro" };
+
+function SubscriptionsTab({ d }: { d: D }) {
+  const act = useAction();
+  const { data: subs = [] } = useQuery(q("subscriptions", () => supabase.from("subscriptions").select("*").order("created_at", { ascending: false })));
+  const owners = d.profiles.filter((p) => d.roles.some((r) => r.user_id === p.id && r.role === "owner"));
+  const name = (id: string) => d.profiles.find((p) => p.id === id)?.full_name || "Owner";
+  const billing = d.reports.filter((r) => r.reason.startsWith("Billing:") && (r.status === "open" || r.status === "reviewing"));
+  const featured = d.listings.filter((l) => l.premium);
+  return (
+    <div className="space-y-6">
+      <Panel title={`Open billing requests (${billing.length})`}>
+        {billing.length === 0 ? <Empty text="No pending plan or featured requests." /> : (
+          <ul className="-my-2 divide-y divide-border">{billing.map((r) => {
+            const listing = d.listings.find((l) => l.id === r.listing_id);
+            const plan = r.reason.includes("Business Pro") ? "business_pro" : r.reason.includes("Business Basic") ? "business_basic" : null;
+            return (
+              <li key={r.id} className="flex flex-wrap items-center gap-2 py-3">
+                <div className="min-w-0 flex-1"><p className="text-sm font-medium">{r.reason.replace("Billing: ", "")}</p><p className="text-xs text-muted-foreground">{name(r.reporter_id)} · {ago(r.created_at)}</p></div>
+                {listing && <button className={btnAccent} onClick={() => void act(async () => {
+                  const res = await supabase.from("listings").update({ premium: true }).eq("id", listing.id);
+                  if (res.error) return res;
+                  return supabase.from("reports").update({ status: "resolved", admin_note: "Payment confirmed — your listing is now featured." }).eq("id", r.id);
+                }, "Listing featured")}>Confirm & feature</button>}
+                {plan && <button className={btnAccent} onClick={() => void act(async () => {
+                  const ends = new Date(); ends.setMonth(ends.getMonth() + 1);
+                  const res = await supabase.from("subscriptions").insert({ owner_id: r.reporter_id, plan, ends_at: ends.toISOString(), notes: "Activated from owner request" });
+                  if (res.error) return res;
+                  return supabase.from("reports").update({ status: "resolved", admin_note: `Payment confirmed — ${PLAN_NAMES[plan]} is active.` }).eq("id", r.id);
+                }, "Plan activated")}>Confirm & activate</button>}
+                <button className={btnDanger} onClick={() => { const n = window.prompt("Reason for declining"); if (n) void act(() => supabase.from("reports").update({ status: "dismissed", admin_note: n.slice(0, 300) }).eq("id", r.id), "Request declined"); }}>Decline</button>
+              </li>
+            );
+          })}</ul>
+        )}
+      </Panel>
+      <Panel title="Grant a business plan">
+        <form className="flex flex-wrap gap-2" onSubmit={(e) => {
+          e.preventDefault(); const f = new FormData(e.currentTarget);
+          const months = Number(f.get("months") || 1); const ends = new Date(); ends.setMonth(ends.getMonth() + months);
+          void act(() => supabase.from("subscriptions").insert({ owner_id: String(f.get("owner")), plan: String(f.get("plan")), ends_at: ends.toISOString(), notes: String(f.get("notes") ?? "") }), "Plan activated");
+        }}>
+          <select name="owner" required className={input + " w-56"}><option value="">Choose owner</option>{owners.map((o) => <option key={o.id} value={o.id}>{o.full_name || o.id.slice(0, 8)}</option>)}</select>
+          <select name="plan" className={input + " w-44"}><option value="business_basic">Business Basic</option><option value="business_pro">Business Pro</option></select>
+          <input name="months" type="number" min={1} max={24} defaultValue={1} className={input + " w-24"} aria-label="Months" />
+          <input name="notes" placeholder="Payment reference" className={input + " w-48"} />
+          <button className={btnAccent + " h-9"}>Activate</button>
+        </form>
+      </Panel>
+      <Panel title={`${subs.length} subscriptions`}>
+        {subs.length === 0 ? <Empty text="No subscriptions yet." /> : (
+          <Table head={["Owner", "Plan", "Status", "Started", "Ends", ""]}>
+            {subs.map((s) => (
+              <tr key={s.id}>
+                <td className={td}>{name(s.owner_id)}</td><td className={td + " font-medium"}>{PLAN_NAMES[s.plan] ?? s.plan}</td><td className={td}><Status s={s.status} /></td>
+                <td className={td}>{fmtDate(s.starts_at)}</td><td className={td}>{s.ends_at ? fmtDate(s.ends_at) : "—"}</td>
+                <td className={td}>{s.status === "active" && <button className={btnDanger} onClick={() => { if (window.confirm("Cancel this plan?")) void act(() => supabase.from("subscriptions").update({ status: "cancelled" }).eq("id", s.id), "Plan cancelled"); }}>Cancel</button>}</td>
+              </tr>
+            ))}
+          </Table>
+        )}
+      </Panel>
+      <Panel title={`${featured.length} featured listings`}>
+        {featured.length === 0 ? <Empty text="No featured listings." /> : (
+          <ul className="-my-2 divide-y divide-border">{featured.map((l) => (
+            <li key={l.id} className="flex items-center gap-2 py-2"><span className="flex-1 text-sm font-medium">{l.title}</span><span className="text-xs text-muted-foreground">{l.owner_name}</span>
+              <button className={btn} onClick={() => void act(() => supabase.from("listings").update({ premium: false }).eq("id", l.id), "Removed from featured")}>Unfeature</button></li>
+          ))}</ul>
+        )}
+      </Panel>
+    </div>
   );
 }
