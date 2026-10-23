@@ -118,47 +118,120 @@ function Detail() {
   );
 }
 
-function RequestDialog({ kind, title }: { kind: "contact" | "viewing"; title: string }) {
+type L = ReturnType<typeof Route.useLoaderData>;
+
+function SignInPrompt({ what }: { what: string }) {
+  return (
+    <div className="space-y-3 text-sm">
+      <p className="text-muted-foreground">Sign in with a verified account to {what}. Every request is linked to a real identity.</p>
+      <Button asChild variant="accent" className="w-full"><Link to="/signin">Sign in or create an account</Link></Button>
+    </div>
+  );
+}
+
+function RequestDialog({ kind, l }: { kind: "rental" | "viewing"; l: L }) {
   const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const { userId, role } = useAuth();
+  const navigate = useNavigate();
   const isView = kind === "viewing";
+  const daily = l.price_unit === "day";
+  const [start, setStart] = useState("");
+  const [end, setEnd] = useState("");
+  const [months, setMonths] = useState(l.min_term);
+  const quote = bookingQuote(l, start, end || start, months);
+  const today = new Date().toISOString().slice(0, 10);
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild><Button variant={isView ? "outline" : "accent"}>{isView ? "Request a viewing" : "Contact owner"}</Button></DialogTrigger>
+      <DialogTrigger asChild><Button variant={isView ? "outline" : "accent"}>{isView ? "Request a viewing" : daily ? "Request to rent" : "Request to rent"}</Button></DialogTrigger>
       <DialogContent>
-        <DialogHeader><DialogTitle>{isView ? "Request a viewing" : "Message the owner"}</DialogTitle></DialogHeader>
-        <form className="space-y-3" onSubmit={(e) => {
+        <DialogHeader><DialogTitle>{isView ? "Request a viewing" : `Rent ${l.title}`}</DialogTitle></DialogHeader>
+        {!userId ? <SignInPrompt what="send a request" /> : l.owner_id === userId ? <p className="text-sm text-muted-foreground">This is your own listing.</p> : role === "admin" ? <p className="text-sm text-muted-foreground">Admin accounts can't book rentals.</p> : (
+        <form className="space-y-3" onSubmit={async (e) => {
           e.preventDefault();
           const fd = new FormData(e.currentTarget);
-          const phone = String(fd.get("phone"));
-          if (!/^(\+251|0)?9\d{8}$/.test(phone.replace(/\s/g, ""))) { toast.error("Enter a valid Ethiopian phone number, e.g. 09XX XXX XXX"); return; }
+          const phone = String(fd.get("phone")).replace(/\s/g, "");
+          if (!/^(\+251|0)?9\d{8}$/.test(phone)) { toast.error("Enter a valid Ethiopian phone number, e.g. 09XX XXX XXX"); return; }
+          let s = start, en = end || start;
+          if (!isView && !daily) {
+            const d = new Date(start); d.setMonth(d.getMonth() + Math.max(months, l.min_term)); d.setDate(d.getDate() - 1);
+            en = d.toISOString().slice(0, 10);
+          }
+          if (isView) en = s;
+          if (!s || en < s) { toast.error("Choose valid dates"); return; }
+          setBusy(true);
+          const { error } = await supabase.from("bookings").insert({
+            listing_id: l.id, renter_id: userId, owner_id: l.owner_id, kind, start_date: s, end_date: en,
+            units: isView ? 0 : daily ? quote.units : Math.max(months, l.min_term), phone, renter_name: String(fd.get("name") ?? ""),
+            message: String(fd.get("msg") ?? "").slice(0, 500),
+          });
+          setBusy(false);
+          if (error) { toast.error(error.message); return; }
           setOpen(false);
-          toast.success("Demo: request recorded locally. Real delivery arrives with accounts.", { description: title });
+          toast.success("Request sent to the owner", { description: "Track it in your dashboard." });
+          void navigate({ to: "/renter", search: { tab: "requests" } });
         }}>
           <label className="block text-sm font-medium">Your name<input name="name" required className={field} /></label>
           <label className="block text-sm font-medium">Phone<input name="phone" required placeholder="09XX XXX XXX" className={field} /></label>
-          {isView && <label className="block text-sm font-medium">Preferred date<input name="date" type="date" required className={field} /></label>}
-          <label className="block text-sm font-medium">Message<textarea name="msg" rows={3} className="mt-1 w-full rounded-md border border-input bg-background p-3 text-sm" defaultValue={isView ? "" : "Hello, is this property still available?"} /></label>
-          <p className="text-xs text-muted-foreground">Demo mode — nothing is sent yet.</p>
-          <Button type="submit" variant="accent" className="w-full">Send request</Button>
-        </form>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block text-sm font-medium">{isView ? "Preferred date" : "Start date"}<input type="date" min={today} required value={start} onChange={(e) => setStart(e.target.value)} className={field} /></label>
+            {!isView && (daily
+              ? <label className="block text-sm font-medium">End date<input type="date" min={start || today} required value={end} onChange={(e) => setEnd(e.target.value)} className={field} /></label>
+              : <label className="block text-sm font-medium">Months<input type="number" min={l.min_term} value={months} onChange={(e) => setMonths(Number(e.target.value))} className={field} /></label>)}
+          </div>
+          <label className="block text-sm font-medium">Message<textarea name="msg" rows={3} className="mt-1 w-full rounded-md border border-input bg-background p-3 text-sm" defaultValue={isView ? "" : "Hello, is this still available for these dates?"} /></label>
+          {!isView && quote.total > 0 && <p className="rounded-md bg-muted p-3 text-sm">Estimated total: <span className="font-semibold">{formatETB(quote.total)}</span> for {quote.units} {unitLabel(l.price_unit)}{quote.units > 1 ? "s" : ""}</p>}
+          <Button type="submit" variant="accent" className="w-full" disabled={busy}>{busy ? "Sending…" : "Send request"}</Button>
+        </form>)}
       </DialogContent>
     </Dialog>
   );
 }
 
-function ReportDialog() {
+function ReportDialog({ l }: { l: L }) {
   const [open, setOpen] = useState(false);
+  const { userId } = useAuth();
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild><button className="flex w-full items-center justify-center gap-2 text-sm text-muted-foreground hover:text-destructive"><Flag className="h-4 w-4" />Report suspicious listing</button></DialogTrigger>
       <DialogContent>
         <DialogHeader><DialogTitle>Report this listing</DialogTitle></DialogHeader>
-        <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); setOpen(false); toast.success("Demo: report noted. Moderation queue arrives with accounts."); }}>
-          <select required className={field}><option value="">Choose a reason</option><option>Asked for payment before viewing</option><option>Fake or misleading photos</option><option>Owner identity doubts</option><option>Already rented</option></select>
-          <textarea rows={3} placeholder="Details (optional)" className="w-full rounded-md border border-input bg-background p-3 text-sm" />
+        {!userId ? <SignInPrompt what="report a listing" /> : (
+        <form className="space-y-3" onSubmit={async (e) => {
+          e.preventDefault(); const f = new FormData(e.currentTarget);
+          const { error } = await supabase.from("reports").insert({ reporter_id: userId, kind: "listing", listing_id: l.id, reason: String(f.get("reason")), details: String(f.get("details") ?? "").slice(0, 2000) });
+          if (error) { toast.error(error.message); return; }
+          setOpen(false); toast.success("Report sent to our moderation team");
+        }}>
+          <select name="reason" required className={field}><option value="">Choose a reason</option><option>Asked for payment before viewing</option><option>Fake or misleading photos</option><option>Owner identity doubts</option><option>Already rented</option></select>
+          <textarea name="details" rows={3} placeholder="Details (optional)" className="w-full rounded-md border border-input bg-background p-3 text-sm" />
           <Button type="submit" variant="destructive" className="w-full">Submit report</Button>
-        </form>
+        </form>)}
       </DialogContent>
     </Dialog>
+  );
+}
+
+function Reviews({ id }: { id: string }) {
+  const { data = [] } = useQuery({
+    queryKey: ["reviews", id],
+    queryFn: async () => (await supabase.from("reviews").select("*").eq("listing_id", id).order("created_at", { ascending: false })).data ?? [],
+  });
+  const visible = data.filter((r) => (r as { hidden?: boolean }).hidden !== true);
+  const avg = visible.length ? (visible.reduce((s, r) => s + r.rating, 0) / visible.length).toFixed(1) : null;
+  return (
+    <>
+      <h2 className="mt-10 flex items-center gap-2 text-xl font-bold"><Star className="h-5 w-5 text-accent" />{avg ? `${avg} · ${visible.length} review${visible.length > 1 ? "s" : ""}` : "Reviews"}</h2>
+      {visible.length === 0 ? <p className="mt-3 text-sm text-muted-foreground">No reviews yet. Renters can review after a completed rental.</p> : (
+        <ul className="mt-3 divide-y divide-border rounded-xl border border-border bg-card">
+          {visible.map((r) => (
+            <li key={r.id} className="p-4">
+              <p className="text-sm"><span className="text-accent">{"★".repeat(r.rating)}</span><span className="text-border">{"★".repeat(5 - r.rating)}</span> <span className="font-medium">{r.reviewer_name}</span></p>
+              {r.comment && <p className="mt-1 text-sm text-muted-foreground">{r.comment}</p>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
   );
 }
