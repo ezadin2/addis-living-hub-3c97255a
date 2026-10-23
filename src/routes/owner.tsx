@@ -77,6 +77,7 @@ function OwnerPage() {
       { id: "agreements", label: "Agreements", icon: FileSignature },
       { id: "payments", label: "Payments & earnings", icon: Banknote },
       { id: "reviews", label: "Reviews", icon: Star },
+      { id: "plans", label: "Featured & plans", icon: Crown },
     ] },
   ];
   const titles: Record<Tab, [string, string]> = {
@@ -87,18 +88,20 @@ function OwnerPage() {
     agreements: ["Agreements", "Draft and share written rental agreements."],
     payments: ["Payments & earnings", "Record payments received and track your income."],
     reviews: ["Reviews", "What renters say about your listings."],
+    plans: ["Featured listings & business plans", "Get more visibility, or rent at scale with a monthly plan."],
     notifications: ["Notifications", "Updates about your listings and renters."],
   };
   return (
     <DashShell role="owner" groups={groups} active={tab} onSelect={(t) => go(t as Tab)} title={titles[tab][0]} subtitle={titles[tab][1]}
       actions={tab !== "new" && <button className={btnAccent} onClick={() => go("new")}><Plus className="h-3.5 w-3.5" />Add listing</button>}>
       {tab === "overview" && <Overview d={d} go={go} />}
-      {tab === "listings" && <ListingsTab d={d} go={go} />}
+      {tab === "listings" && <ListingsTab d={d} go={go} uid={gate.userId!} />}
       {tab === "new" && <NewListing uid={gate.userId!} done={() => go("listings")} />}
       {tab === "requests" && <RequestsTab d={d} />}
       {tab === "agreements" && <AgreementsTab d={d} />}
       {tab === "payments" && <PaymentsTab d={d} />}
       {tab === "reviews" && <ReviewsTab d={d} />}
+      {tab === "plans" && <PlansTab d={d} uid={gate.userId!} />}
       {tab === "notifications" && <NotificationsPanel />}
     </DashShell>
   );
