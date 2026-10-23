@@ -1,8 +1,9 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { toast } from "sonner";
 import {
-  Banknote, BadgeCheck, Bell, CalendarCheck, Eye, FileSignature, Home, LayoutDashboard, ListPlus, MessageSquare, Plus, Star,
+  Banknote, BadgeCheck, Bell, CalendarCheck, Crown, Eye, FileSignature, Home, ImagePlus, LayoutDashboard, ListPlus, MessageSquare, Plus, Sparkles, Star,
 } from "lucide-react";
 import { DashShell, useRoleGate, type NavGroup } from "@/components/dash/DashShell";
 import {
@@ -11,9 +12,10 @@ import {
 } from "@/components/dash/parts";
 import { VerificationBadge } from "@/components/site/VerificationBadge";
 import { supabase } from "@/integrations/supabase/client";
-import { AMENITIES_BY_KIND, CATEGORIES, IMAGE_CHOICES, NEIGHBORHOODS, categoryLabel, formatETB, type Kind } from "@/lib/listings";
+import { AMENITIES_BY_KIND, CATEGORIES, IMAGE_CHOICES, NEIGHBORHOODS, categoryLabel, formatETB, imageUrl, listingImages, type Kind, type Listing } from "@/lib/listings";
+import { MAX_PHOTOS, compressPhoto } from "@/lib/photos";
 
-type Tab = "overview" | "listings" | "new" | "requests" | "agreements" | "payments" | "reviews" | "notifications";
+type Tab = "overview" | "listings" | "new" | "requests" | "agreements" | "payments" | "reviews" | "plans" | "notifications";
 
 export const Route = createFileRoute("/owner")({
   validateSearch: (s: Record<string, unknown>): { tab?: Tab | undefined } => (typeof s["tab"] === "string" ? { tab: s["tab"] as Tab } : {}),
@@ -173,26 +175,31 @@ function RequestRow({ b, title }: { b: D["bookings"][number]; title: string }) {
   );
 }
 
-function ListingsTab({ d, go }: { d: D; go: (t: Tab) => void }) {
+function ListingsTab({ d, go, uid }: { d: D; go: (t: Tab) => void; uid: string }) {
   const act = useAction();
+  const [editing, setEditing] = useState<Listing | null>(null);
+  if (editing) return <NewListing uid={uid} existing={editing} done={() => setEditing(null)} />;
   if (d.listings.length === 0) return <Panel title="My listings"><Empty text="No listings yet."><button className={btnAccent} onClick={() => go("new")}>Add listing</button></Empty></Panel>;
   return (
     <Panel title={`${d.listings.length} listings`}>
       <Table head={["Listing", "Price", "Status", "Available", "Views", "Actions"]}>
         {d.listings.map((l) => (
           <tr key={l.id}>
-            <td className={td}><Link to="/rentals/$id" params={{ id: l.id }} className="font-medium hover:text-accent">{l.title}</Link><p className="text-xs text-muted-foreground">{categoryLabel(l.category)} · {l.neighborhood}</p>{l.rejection_reason && <p className="text-xs text-destructive">Rejected: {l.rejection_reason}</p>}</td>
+            <td className={td}>
+              <div className="flex items-center gap-3">
+                <img src={listingImages(l)[0]} alt="" className="h-10 w-14 shrink-0 rounded-md bg-muted object-cover" />
+                <div className="min-w-0"><Link to="/rentals/$id" params={{ id: l.id }} className="font-medium hover:text-accent">{l.title}</Link><p className="text-xs text-muted-foreground">{categoryLabel(l.category)} · {l.neighborhood}</p>{l.rejection_reason && <p className="text-xs text-destructive">Rejected: {l.rejection_reason}</p>}</div>
+              </div>
+            </td>
             <td className={td + " whitespace-nowrap"}>{formatETB(l.price)}/{l.price_unit}</td>
-            <td className={td}><Status s={l.status} />{l.premium && <span className="ml-1 text-[11px] font-semibold text-accent">Premium</span>}</td>
+            <td className={td}><Status s={l.status} />{l.premium && <span className="ml-1 text-[11px] font-semibold text-accent">Featured</span>}</td>
             <td className={td}><input type="checkbox" checked={l.available} onChange={(e) => void act(() => supabase.from("listings").update({ available: e.target.checked }).eq("id", l.id), "Availability updated")} aria-label="Available" /></td>
             <td className={td}>{l.views}</td>
             <td className={td}>
               <div className="flex flex-wrap gap-1">
                 {(l.status === "draft" || l.status === "rejected") && <button className={btnAccent} onClick={() => void act(() => supabase.from("listings").update({ status: "pending" }).eq("id", l.id), "Submitted for review")}>Submit</button>}
-                <button className={btn} onClick={() => {
-                  const p = window.prompt("New price (ETB)", String(l.price));
-                  if (p && Number(p) > 0) void act(() => supabase.from("listings").update({ price: Number(p) }).eq("id", l.id), "Price updated");
-                }}>Edit price</button>
+                <button className={btn} onClick={() => setEditing(l)}>Edit</button>
+                {l.status === "approved" && !l.premium && <button className={btn} onClick={() => go("plans")}>Feature it</button>}
                 <button className={btnDanger} onClick={() => { if (window.confirm("Delete this listing?")) void act(() => supabase.from("listings").delete().eq("id", l.id), "Listing deleted"); }}>Delete</button>
               </div>
             </td>
@@ -200,6 +207,60 @@ function ListingsTab({ d, go }: { d: D; go: (t: Tab) => void }) {
         ))}
       </Table>
     </Panel>
+  );
+}
+
+const PLANS = [
+  { id: "business_basic", name: "Business Basic", price: 1500, perks: ["Up to 15 active listings", "Bulk request management", "Monthly earnings report"] },
+  { id: "business_pro", name: "Business Pro", price: 4000, perks: ["Unlimited listings", "2 featured listings included", "Priority support & dedicated contact"] },
+] as const;
+
+function PlansTab({ d, uid }: { d: D; uid: string }) {
+  const act = useAction();
+  const { data: settings } = useQuery({ queryKey: ["settings"], queryFn: async () => (await supabase.from("platform_settings").select("*").eq("id", 1).single()).data });
+  const { data: subs = [] } = useQuery({ queryKey: ["owner", "subs", uid], queryFn: async () => (await supabase.from("subscriptions").select("*").eq("owner_id", uid).order("created_at", { ascending: false })).data ?? [] });
+  const { data: requests = [] } = useQuery({ queryKey: ["owner", "billing", uid], queryFn: async () => (await supabase.from("reports").select("*").eq("reporter_id", uid).eq("kind", "support").like("reason", "Billing:%").order("created_at", { ascending: false })).data ?? [] });
+  const active = subs.find((s) => s.status === "active");
+  const request = (reason: string, details: string, listingId: string | null = null) =>
+    act(() => supabase.from("reports").insert({ reporter_id: uid, kind: "support", reason, details, listing_id: listingId }), "Request sent — our team will confirm payment and activate it");
+  const featurable = d.listings.filter((l) => l.status === "approved" && !l.premium);
+  return (
+    <div className="space-y-6">
+      <Panel title="Featured listings">
+        <p className="text-sm text-muted-foreground">Featured listings appear first on the homepage and in search, with a Featured label. Fee: <span className="font-semibold text-foreground">{formatETB(settings?.premium_fee ?? 0)}</span> per listing per month.</p>
+        {featurable.length === 0 ? <p className="mt-3 text-sm text-muted-foreground">You have no approved listings left to feature.</p> : (
+          <ul className="mt-3 divide-y divide-border">
+            {featurable.map((l) => (
+              <li key={l.id} className="flex items-center gap-3 py-2">
+                <span className="flex-1 text-sm font-medium">{l.title}</span>
+                <button className={btnAccent} onClick={() => void request(`Billing: Feature "${l.title.slice(0, 150)}"`, `Owner requests featured placement. Fee ${settings?.premium_fee ?? 0} ETB/month.`, l.id)}><Sparkles className="h-3.5 w-3.5" />Request featured</button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Panel>
+      <Panel title="Business subscriptions">
+        {active && <p className="mb-4 rounded-md bg-accent-soft p-3 text-sm">Current plan: <span className="font-semibold">{PLANS.find((p) => p.id === active.plan)?.name}</span> · since {fmtDate(active.starts_at)}{active.ends_at && ` · until ${fmtDate(active.ends_at)}`}</p>}
+        <div className="grid gap-4 sm:grid-cols-2">
+          {PLANS.map((p) => (
+            <div key={p.id} className="rounded-xl border border-border p-4">
+              <p className="font-semibold">{p.name}</p>
+              <p className="mt-1 font-display text-2xl font-bold">{formatETB(p.price)}<span className="text-xs font-medium text-muted-foreground"> /month</span></p>
+              <ul className="mt-3 space-y-1 text-sm text-muted-foreground">{p.perks.map((x) => <li key={x}>• {x}</li>)}</ul>
+              <button disabled={active?.plan === p.id} className={btnAccent + " mt-4 h-9 w-full justify-center"} onClick={() => void request(`Billing: Subscribe to ${p.name}`, `Owner requests the ${p.id} plan at ${p.price} ETB/month.`)}>{active?.plan === p.id ? "Your plan" : "Request this plan"}</button>
+            </div>
+          ))}
+        </div>
+        <p className="mt-3 text-xs text-muted-foreground">Payment is made by bank transfer or telebirr. Our team activates the plan once payment is confirmed.</p>
+      </Panel>
+      {requests.length > 0 && (
+        <Panel title="Your billing requests">
+          <ul className="-my-2 divide-y divide-border">{requests.map((r) => (
+            <li key={r.id} className="flex flex-wrap items-center gap-2 py-3"><Status s={r.status} /><span className="text-sm">{r.reason.replace("Billing: ", "")}</span><span className="text-xs text-muted-foreground">{ago(r.created_at)}</span>{r.admin_note && <p className="w-full text-xs text-muted-foreground">Team: {r.admin_note}</p>}</li>
+          ))}</ul>
+        </Panel>
+      )}
+    </div>
   );
 }
 
