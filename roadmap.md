@@ -1,10 +1,10 @@
 # FaydaRent roadmap
 
 - [x] Import repo, connect backend, fix demo logins
-- [ ] Proposal compliance: schema (agreements, payments, reviews, reports, notifications, audit, settings, subscriptions, categories, favorites)
-- [ ] Role routing: /dashboard -> /admin | /owner | /renter, protected
-- [ ] Owner: real listing create/edit/draft/submit/resubmit, image upload, requests accept/decline, agreements, payments
-- [ ] Renter: real booking requests, favorites in DB, agreements accept, reviews, reports, notifications
-- [ ] Admin: overview, users/roles/status/verification, listings moderation, categories, bookings, agreements, payments/commission, subscriptions/premium, reviews, reports, settings, audit log
-- [ ] Verify flows end-to-end, compliance report
-- Blocked: live Fayda integration, automated payments, insurance, mobile app (future phases)
+- [x] Homepage "Recently added" photos
+- [x] Owner: create/edit listings with photo upload, drafts, submit/resubmit
+- [x] Renter: real booking & viewing requests, saved listings in account, reports from listing page, reviews shown on listings
+- [x] Agreements, payments and 2–5% commission tracking (owner records, admin views)
+- [x] Featured listings (owner request -> admin confirm) and business plans (Basic/Pro)
+- [x] Admin: moderation, users, reports, settings, subscriptions & featured
+- Blocked: live Fayda integration (needs government API access), automated payments (needs payment provider), insurance, mobile app (future phases)
