@@ -203,76 +203,120 @@ function ListingsTab({ d, go }: { d: D; go: (t: Tab) => void }) {
   );
 }
 
-function NewListing({ uid, done }: { uid: string; done: () => void }) {
-  const act = useAction();
-  const [kind, setKind] = useState<Kind>("property");
+function PhotoPicker({ photos, setPhotos }: { photos: string[]; setPhotos: (p: string[]) => void }) {
   const [busy, setBusy] = useState(false);
+  return (
+    <fieldset>
+      <legend className="text-sm font-medium">Photos <span className="font-normal text-muted-foreground">({photos.length}/{MAX_PHOTOS}) — the first photo is the cover</span></legend>
+      <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-6">
+        {photos.map((p, i) => (
+          <div key={i} className="group relative aspect-[4/3] overflow-hidden rounded-lg border border-border bg-muted">
+            <img src={imageUrl(p)} alt={`Photo ${i + 1}`} className="h-full w-full object-cover" />
+            <div className="absolute inset-x-0 bottom-0 flex justify-between bg-card/90 p-0.5 text-[11px]">
+              {i > 0 ? <button type="button" onClick={() => setPhotos([p, ...photos.filter((_, j) => j !== i)])}>Cover</button> : <span className="font-semibold text-accent">Cover</span>}
+              <button type="button" className="text-destructive" onClick={() => setPhotos(photos.filter((_, j) => j !== i))}>Remove</button>
+            </div>
+          </div>
+        ))}
+        {photos.length < MAX_PHOTOS && (
+          <label className="grid aspect-[4/3] cursor-pointer place-items-center rounded-lg border-2 border-dashed border-input text-center text-xs text-muted-foreground hover:border-accent">
+            <span><ImagePlus className="mx-auto h-5 w-5" />{busy ? "Processing…" : "Add photos"}</span>
+            <input type="file" accept="image/*" multiple className="sr-only" disabled={busy} onChange={async (e) => {
+              const files = [...(e.target.files ?? [])].slice(0, MAX_PHOTOS - photos.length);
+              e.target.value = "";
+              setBusy(true);
+              try { setPhotos([...photos, ...(await Promise.all(files.map((f) => compressPhoto(f))))]); }
+              catch (err) { toast.error(err instanceof Error ? err.message : "Could not read photo"); }
+              setBusy(false);
+            }} />
+          </label>
+        )}
+      </div>
+    </fieldset>
+  );
+}
+
+function NewListing({ uid, done, existing }: { uid: string; done: () => void; existing?: Listing }) {
+  const act = useAction();
+  const qc = useQueryClient();
+  const [kind, setKind] = useState<Kind>((existing?.kind as Kind) ?? "property");
+  const [photos, setPhotos] = useState<string[]>(existing?.images.filter((i) => i.trim()) ?? []);
+  const [busy, setBusy] = useState(false);
+  const v = existing;
   const submit = async (e: React.FormEvent<HTMLFormElement>, status: "draft" | "pending") => {
     e.preventDefault();
     const f = new FormData((e.currentTarget as HTMLElement & { form?: HTMLFormElement })["form"] ?? e.currentTarget);
     const n = (k: string) => (f.get(k) ? Number(f.get(k)) : null);
     const s = (k: string) => (f.get(k) ? String(f.get(k)).trim() : null);
-    setBusy(true);
-    const ok = await act(() => supabase.from("listings").insert({
-      owner_id: uid, kind, status, category: s("category")!, title: s("title")!.slice(0, 120), description: (s("description") ?? "").slice(0, 2000),
+    if (status === "pending" && photos.length === 0) { toast.error("Add at least one photo before submitting for review"); return; }
+    const row = {
+      kind, category: s("category")!, title: s("title")!.slice(0, 120), description: (s("description") ?? "").slice(0, 2000),
       neighborhood: s("neighborhood") ?? "", price: n("price") ?? 0, price_unit: kind === "property" ? "month" : "day",
       bedrooms: n("bedrooms") ?? 0, bathrooms: n("bathrooms") ?? 0, size_sqm: n("size_sqm"), furnishing: s("furnishing"),
       min_term: n("min_term") ?? 1, deposit: s("deposit"), make: s("make"), model: s("model"), year: n("year"), seats: n("seats"),
       transmission: s("transmission"), fuel: s("fuel"), with_operator: f.get("with_operator") === "on", contact_phone: s("contact_phone"),
-      amenities: f.getAll("amenities").map(String), images: IMAGE_CHOICES[kind],
-    }), status === "draft" ? "Saved as draft" : "Submitted for review");
+      amenities: f.getAll("amenities").map(String), images: photos.length ? photos : IMAGE_CHOICES[kind],
+    };
+    setBusy(true);
+    const ok = await act(
+      () => v ? supabase.from("listings").update({ ...row, status }).eq("id", v.id) : supabase.from("listings").insert({ ...row, owner_id: uid, status }),
+      status === "draft" ? "Saved as draft" : v ? "Changes submitted for review" : "Submitted for review",
+    );
     setBusy(false);
-    if (ok) done();
+    if (ok) { void qc.invalidateQueries({ queryKey: ["listings"] }); done(); }
   };
   const lbl = "block text-sm font-medium";
   return (
-    <Panel title="Listing details" className="max-w-3xl">
-      <form className="space-y-5" onSubmit={(e) => void submit(e, "pending")}>
+    <Panel title={v ? `Edit: ${v.title}` : "Listing details"} className="max-w-3xl">
+      <form key={kind} className="space-y-5" onSubmit={(e) => void submit(e, "pending")}>
         <div className="grid grid-cols-3 gap-2">
           {(["property", "vehicle", "equipment"] as Kind[]).map((k) => (
             <button type="button" key={k} onClick={() => setKind(k)} className={`rounded-lg border p-3 text-sm font-semibold capitalize ${kind === k ? "border-accent bg-accent-soft text-accent" : "border-input"}`}>{k}</button>
           ))}
         </div>
+        <PhotoPicker photos={photos} setPhotos={setPhotos} />
         <div className="grid gap-4 sm:grid-cols-2">
-          <label className={lbl}>Category<select name="category" required className={input + " mt-1"}>{CATEGORIES.filter((c) => c.kind === kind).map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}</select></label>
-          <label className={lbl}>Neighborhood / location<input name="neighborhood" required list="owner-neighborhoods" maxLength={80} placeholder="Pick or type, e.g. Lebu" className={input + " mt-1"} /><datalist id="owner-neighborhoods">{NEIGHBORHOODS.map((n) => <option key={n} value={n} />)}</datalist></label>
-          <label className={lbl + " sm:col-span-2"}>Title<input name="title" required maxLength={120} className={input + " mt-1"} /></label>
-          <label className={lbl + " sm:col-span-2"}>Description<textarea name="description" rows={3} maxLength={2000} className={input + " mt-1 h-auto py-2"} /></label>
-          <label className={lbl}>{kind === "property" ? "Monthly rent (ETB)" : "Price per day (ETB)"}<input name="price" type="number" min={1} required className={input + " mt-1"} /></label>
-          <label className={lbl}>Contact phone<input name="contact_phone" maxLength={20} className={input + " mt-1"} /></label>
+          <label className={lbl}>Category<select name="category" required defaultValue={v?.category} className={input + " mt-1"}>{CATEGORIES.filter((c) => c.kind === kind).map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}</select></label>
+          <label className={lbl}>Neighborhood / location<input name="neighborhood" required defaultValue={v?.neighborhood} list="owner-neighborhoods" maxLength={80} placeholder="Pick or type, e.g. Lebu" className={input + " mt-1"} /><datalist id="owner-neighborhoods">{NEIGHBORHOODS.map((n) => <option key={n} value={n} />)}</datalist></label>
+          <label className={lbl + " sm:col-span-2"}>Title<input name="title" required defaultValue={v?.title} maxLength={120} className={input + " mt-1"} /></label>
+          <label className={lbl + " sm:col-span-2"}>Description<textarea name="description" defaultValue={v?.description} rows={3} maxLength={2000} className={input + " mt-1 h-auto py-2"} /></label>
+          <label className={lbl}>{kind === "property" ? "Monthly rent (ETB)" : "Price per day (ETB)"}<input name="price" type="number" min={1} required defaultValue={v?.price} className={input + " mt-1"} /></label>
+          <label className={lbl}>Contact phone<input name="contact_phone" defaultValue={v?.contact_phone ?? ""} maxLength={20} className={input + " mt-1"} /></label>
           {kind === "property" && <>
-            <label className={lbl}>Bedrooms<input name="bedrooms" type="number" min={0} defaultValue={1} className={input + " mt-1"} /></label>
-            <label className={lbl}>Bathrooms<input name="bathrooms" type="number" min={0} defaultValue={1} className={input + " mt-1"} /></label>
-            <label className={lbl}>Size (m²)<input name="size_sqm" type="number" min={1} className={input + " mt-1"} /></label>
-            <label className={lbl}>Furnishing<select name="furnishing" className={input + " mt-1"}><option value="unfurnished">Unfurnished</option><option value="semi-furnished">Semi-furnished</option><option value="furnished">Furnished</option></select></label>
-            <label className={lbl}>Minimum term (months)<input name="min_term" type="number" min={1} defaultValue={1} className={input + " mt-1"} /></label>
-            <label className={lbl}>Deposit<input name="deposit" placeholder="e.g. 2 months" className={input + " mt-1"} /></label>
+            <label className={lbl}>Bedrooms<input name="bedrooms" type="number" min={0} defaultValue={v?.bedrooms ?? 1} className={input + " mt-1"} /></label>
+            <label className={lbl}>Bathrooms<input name="bathrooms" type="number" min={0} defaultValue={v?.bathrooms ?? 1} className={input + " mt-1"} /></label>
+            <label className={lbl}>Size (m²)<input name="size_sqm" type="number" min={1} defaultValue={v?.size_sqm ?? ""} className={input + " mt-1"} /></label>
+            <label className={lbl}>Furnishing<select name="furnishing" defaultValue={v?.furnishing ?? "unfurnished"} className={input + " mt-1"}><option value="unfurnished">Unfurnished</option><option value="semi-furnished">Semi-furnished</option><option value="furnished">Furnished</option></select></label>
+            <label className={lbl}>Minimum term (months)<input name="min_term" type="number" min={1} defaultValue={v?.min_term ?? 1} className={input + " mt-1"} /></label>
+            <label className={lbl}>Deposit<input name="deposit" defaultValue={v?.deposit ?? ""} placeholder="e.g. 2 months" className={input + " mt-1"} /></label>
           </>}
           {kind !== "property" && <>
-            <label className={lbl}>Make<input name="make" className={input + " mt-1"} /></label>
-            <label className={lbl}>Model<input name="model" className={input + " mt-1"} /></label>
-            <label className={lbl}>Year<input name="year" type="number" min={1980} max={2030} className={input + " mt-1"} /></label>
+            <label className={lbl}>Make<input name="make" defaultValue={v?.make ?? ""} className={input + " mt-1"} /></label>
+            <label className={lbl}>Model<input name="model" defaultValue={v?.model ?? ""} className={input + " mt-1"} /></label>
+            <label className={lbl}>Year<input name="year" type="number" min={1980} max={2030} defaultValue={v?.year ?? ""} className={input + " mt-1"} /></label>
             {kind === "vehicle" && <>
-              <label className={lbl}>Seats<input name="seats" type="number" min={1} className={input + " mt-1"} /></label>
-              <label className={lbl}>Transmission<select name="transmission" className={input + " mt-1"}><option value="automatic">Automatic</option><option value="manual">Manual</option></select></label>
-              <label className={lbl}>Fuel<select name="fuel" className={input + " mt-1"}><option value="petrol">Petrol</option><option value="diesel">Diesel</option><option value="electric">Electric</option></select></label>
+              <label className={lbl}>Seats<input name="seats" type="number" min={1} defaultValue={v?.seats ?? ""} className={input + " mt-1"} /></label>
+              <label className={lbl}>Transmission<select name="transmission" defaultValue={v?.transmission ?? "automatic"} className={input + " mt-1"}><option value="automatic">Automatic</option><option value="manual">Manual</option></select></label>
+              <label className={lbl}>Fuel<select name="fuel" defaultValue={v?.fuel ?? "petrol"} className={input + " mt-1"}><option value="petrol">Petrol</option><option value="diesel">Diesel</option><option value="electric">Electric</option></select></label>
             </>}
-            <label className="flex items-center gap-2 text-sm font-medium sm:col-span-2"><input type="checkbox" name="with_operator" /> {kind === "vehicle" ? "Driver included" : "Operator included"}</label>
+            <label className="flex items-center gap-2 text-sm font-medium sm:col-span-2"><input type="checkbox" name="with_operator" defaultChecked={v?.with_operator} /> {kind === "vehicle" ? "Driver included" : "Operator included"}</label>
           </>}
         </div>
         <fieldset>
           <legend className="text-sm font-medium">Features</legend>
           <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {AMENITIES_BY_KIND[kind].map((a) => <label key={a} className="flex items-center gap-2 text-sm"><input type="checkbox" name="amenities" value={a} />{a}</label>)}
+            {AMENITIES_BY_KIND[kind].map((a) => <label key={a} className="flex items-center gap-2 text-sm"><input type="checkbox" name="amenities" value={a} defaultChecked={v?.amenities.includes(a)} />{a}</label>)}
           </div>
         </fieldset>
+        {v?.status === "approved" && <p className="text-xs text-muted-foreground">Changing the title, description, price, photos or category sends the listing back for a quick review.</p>}
         <div className="flex flex-wrap gap-2 border-t border-border pt-4">
-          <button disabled={busy} className={btnAccent + " h-9"}><BadgeCheck className="h-4 w-4" />Submit for review</button>
+          <button disabled={busy} className={btnAccent + " h-9"}><BadgeCheck className="h-4 w-4" />{v ? "Save & submit" : "Submit for review"}</button>
           <button type="button" disabled={busy} className={btn + " h-9"} onClick={(e) => {
             const form = (e.currentTarget as HTMLButtonElement).form!;
             if (!form.reportValidity()) return;
             void submit({ preventDefault() {}, currentTarget: form } as unknown as React.FormEvent<HTMLFormElement>, "draft");
           }}>Save as draft</button>
+          {v && <button type="button" className={btn + " h-9"} onClick={done}>Cancel</button>}
         </div>
       </form>
     </Panel>
